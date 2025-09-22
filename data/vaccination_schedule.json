@@ -1,0 +1,163 @@
+{
+  "NationalImmunizationSchedule": {
+    "PregnantWomen": [
+      {
+        "vaccine": "Tetanus & adult Diphtheria (Td-1)",
+        "when_to_give": "Early in pregnancy",
+        "dose": "0.5 ml",
+        "route": "Intra-muscular",
+        "site": "Upper Arm"
+      },
+      {
+        "vaccine": "Tetanus & adult Diphtheria (Td-2)",
+        "when_to_give": "4 weeks after Td-1",
+        "dose": "0.5 ml",
+        "route": "Intra-muscular",
+        "site": "Upper Arm"
+      },
+      {
+        "vaccine": "Tetanus & adult Diphtheria (Td-Booster)",
+        "when_to_give": "If received 2 TT/Td doses in a pregnancy within the last 3 years",
+        "dose": "0.5 ml",
+        "route": "Intra-muscular",
+        "site": "Upper Arm"
+      }
+    ],
+    "Infants": [
+      {
+        "vaccine": "Bacillus Calmette Guerin (BCG)",
+        "when_to_give": "At birth or as early as possible till one year of age",
+        "dose": "0.1 ml (0.05 ml until 1 month age)",
+        "route": "Intra-dermal",
+        "site": "Left Upper Arm"
+      },
+      {
+        "vaccine": "Hepatitis B (Birth dose)",
+        "when_to_give": "At birth or within 24 hours",
+        "dose": "0.5 ml",
+        "route": "Intra-muscular",
+        "site": "Antero-lateral side of mid-thigh"
+      },
+      {
+        "vaccine": "Oral Polio Vaccine (OPV-0)",
+        "when_to_give": "At birth or within the first 15 days",
+        "dose": "2 drops",
+        "route": "Oral",
+        "site": "Oral"
+      },
+      {
+        "vaccine": "Oral Polio Vaccine (OPV-1,2,3)",
+        "when_to_give": "6, 10, and 14 weeks (can be given till 5 years)",
+        "dose": "2 drops",
+        "route": "Oral",
+        "site": "Oral"
+      },
+      {
+        "vaccine": "Pentavalent (1,2,3)",
+        "when_to_give": "6, 10, and 14 weeks (till 1 year)",
+        "dose": "0.5 ml",
+        "route": "Intra-muscular",
+        "site": "Antero-lateral side of mid-thigh"
+      },
+      {
+        "vaccine": "Pneumococcal Conjugate Vaccine (PCV-1,2,Booster)",
+        "when_to_give": "6 weeks, 14 weeks, and 9–12 months",
+        "dose": "0.5 ml",
+        "route": "Intra-muscular",
+        "site": "Antero-lateral side of mid-thigh",
+        "note": "PCV in selected states/districts"
+      },
+      {
+        "vaccine": "Rotavirus Vaccine (RVV-1,2,3)",
+        "when_to_give": "6, 10, and 14 weeks (till 1 year)",
+        "dose": "5 drops (liquid) or 2.5 ml (lyophilized)",
+        "route": "Oral",
+        "site": "Oral"
+      },
+      {
+        "vaccine": "Inactivated Polio Vaccine (fIPV-1,2)",
+        "when_to_give": "6 weeks and 14 weeks",
+        "dose": "0.1 ml",
+        "route": "Intra-dermal (fractional dose)",
+        "site": "Right upper arm"
+      },
+      {
+        "vaccine": "Measles Rubella (MR-1)",
+        "when_to_give": "9–12 months (can be given till 5 years)",
+        "dose": "0.5 ml",
+        "route": "Sub-cutaneous",
+        "site": "Right Upper Arm"
+      },
+      {
+        "vaccine": "Japanese Encephalitis (JE-1)",
+        "when_to_give": "9–12 months (endemic districts only)",
+        "dose": "0.5 ml",
+        "route": "Sub-cutaneous (Live attenuated) or Intramuscular (Killed)",
+        "site": "Left Upper Arm / Antero-lateral thigh"
+      },
+      {
+        "vaccine": "Vitamin A (1st dose)",
+        "when_to_give": "At 9 months with MR",
+        "dose": "1 ml (1 lakh IU)",
+        "route": "Oral",
+        "site": "Oral"
+      }
+    ],
+    "Children": [
+      {
+        "vaccine": "DPT Booster-1",
+        "when_to_give": "16–24 months",
+        "dose": "0.5 ml",
+        "route": "Intra-muscular",
+        "site": "Antero-lateral side of mid-thigh"
+      },
+      {
+        "vaccine": "MR-2",
+        "when_to_give": "16–24 months",
+        "dose": "0.5 ml",
+        "route": "Sub-cutaneous",
+        "site": "Right Upper Arm"
+      },
+      {
+        "vaccine": "OPV Booster",
+        "when_to_give": "16–24 months",
+        "dose": "2 drops",
+        "route": "Oral",
+        "site": "Oral"
+      },
+      {
+        "vaccine": "JE-2",
+        "when_to_give": "16–24 months",
+        "dose": "0.5 ml",
+        "route": "Sub-cutaneous (Live) / Intramuscular (Killed)",
+        "site": "Left Upper Arm / Antero-lateral thigh"
+      },
+      {
+        "vaccine": "Vitamin A (2nd–9th doses)",
+        "when_to_give": "16–18 months, then every 6 months up to 5 years",
+        "dose": "2 ml (2 lakh IU)",
+        "route": "Oral",
+        "site": "Oral"
+      },
+      {
+        "vaccine": "DPT Booster-2",
+        "when_to_give": "5–6 years",
+        "dose": "0.5 ml",
+        "route": "Intra-muscular",
+        "site": "Upper Arm"
+      },
+      {
+        "vaccine": "Tetanus & adult Diphtheria (Td)",
+        "when_to_give": "10 years and 16 years",
+        "dose": "0.5 ml",
+        "route": "Intra-muscular",
+        "site": "Upper Arm"
+      }
+    ],
+    "Notes": [
+      "JE vaccine introduced only in endemic districts",
+      "Vitamin A 2nd–9th doses via biannual rounds with ICDS",
+      "PCV given only in selected states/districts"
+    ]
+  }
+}

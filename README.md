@@ -1,1 +1,1 @@
-# SIH
+# healthgraph-assistant
