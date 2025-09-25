@@ -1,0 +1,378 @@
+import os
+import pickle
+import json
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from dotenv import load_dotenv
+from pydantic import BaseModel
+
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.memory import ConversationBufferMemory
+from langchain_community.document_loaders import JSONLoader
+from langchain.document_loaders import PyPDFLoader
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_astradb import AstraDBVectorStore
+from langchain.vectorstores import FAISS
+from langchain.chains import ConversationalRetrievalChain, RetrievalQA
+from langchain.prompts import PromptTemplate
+from langgraph.graph import StateGraph, START, END
+
+from fastapi import FastAPI, Form
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+
+
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+ASTRA_API_KEY = os.getenv("ASTRA_API_KEY")
+DB_ENDPOINT = os.getenv("DB_ENDPOINT")
+
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.0-flash",
+    api_key="AIzaSyDXUANxI0NkUCdVR5f4CO44OLoI0Tpf8_Q",
+    temperature=0.2,
+)
+
+
+class DiskConversationMemory:
+    def __init__(self, filename="chat_memory.pkl"):
+        self.filename = Path(filename)
+        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+        self._load()
+
+    def _load(self):
+        if self.filename.exists():
+            try:
+                with open(self.filename, "rb") as f:
+                    self.memory = pickle.load(f)
+                print(f"Loaded memory from {self.filename}")
+            except Exception as e:
+                print("Failed to load memory, starting fresh:", e)
+
+    def persist(self):
+        try:
+            with open(self.filename, "wb") as f:
+                pickle.dump(self.memory, f)
+                print(f"Persisted memory to {self.filename}")
+        except Exception as e:
+            print("Failed to persist memory:", e)
+
+
+class HealthGraphState(BaseModel):
+    user_message: Optional[str] = None
+    user_meta: Optional[Dict[str, Any]] = None
+    vaccination_docs: Optional[Any] = None
+    outbreak_docs: Optional[Any] = None
+    local_vectorstore: Optional[Any] = None
+    disk_memory: Optional[Any] = None
+    route_decision: Optional[Dict[str, str]] = None
+    response: Optional[str] = None
+    vaccination_json_path: Optional[str] = (
+        r"/Users/aashutoshkumar/Documents/Projects/healthgraph-assistant/data/vaccination_schedule.json"
+    )
+    outbreak_pdf_path: Optional[str] = (
+        r"/Users/aashutoshkumar/Documents/Projects/healthgraph-assistant/latest_weekly_outbreak/31st_weekly_outbreak.pdf"
+    )
+    index_dir: Optional[str] = (
+        r"/Users/aashutoshkumar/Documents/Projects/healthgraph-assistant/exp/faiss_index/index.faiss"
+    )
+
+# ----------------------------
+# Workflow nodes
+# ----------------------------
+def node_web_ingress(state: HealthGraphState) -> HealthGraphState:
+    if not state.user_message:
+        state.user_message = ""
+    state.user_meta = {"source": "web"}
+    return state
+
+def node_load_vaccination_json(state: HealthGraphState) -> HealthGraphState:
+    loader = JSONLoader(file_path=state.vaccination_json_path)
+    state.vaccination_docs = loader.load()
+    return state
+
+def node_load_outbreak_pdf(state: HealthGraphState) -> HealthGraphState:
+    loader = PyPDFLoader(state.outbreak_pdf_path)
+    state.outbreak_docs = loader.load_and_split()
+    return state
+
+def node_build_faiss_index(state: HealthGraphState) -> HealthGraphState:
+    hf_embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    index_dir = Path(state.index_dir).parent
+    index_dir.mkdir(parents=True, exist_ok=True)
+    faiss_file = Path(state.index_dir)
+
+    if faiss_file.exists():
+        state.local_vectorstore = FAISS.load_local(str(index_dir), hf_embedding, allow_dangerous_deserialization=True)
+        print(f"Loaded FAISS index from {index_dir}")
+        return state
+
+    docs = state.outbreak_docs or []
+    if not docs:
+        print("No outbreak documents found to index.")
+        return state
+
+    vectorstore = FAISS.from_documents(docs, embedding=hf_embedding)
+    vectorstore.save_local(str(index_dir))
+    state.local_vectorstore = vectorstore
+    print(f"Built new FAISS index with {len(docs)} docs and saved to {index_dir}")
+    return state
+
+# ----------------------------
+# Routing
+# ----------------------------
+SYMPTOM_KEYWORDS = ["fever", "cough", "pain", "headache", "vomit", "sore throat", "stomach ache", "rash", "fatigue", "tired", "dizzy", "symptom", "disease", "infection", "flu", "cold", "chills", "breathing problem", "allergy", "diarrhea"]
+OUTBREAK_KEYWORDS = ["outbreak", "epidemic", "pandemic", "cases in", "spread", "number of cases", "hotspot", "disease outbreak", "situation report", "alert", "cluster", "local spread"]
+VACCINE_KEYWORDS = ["vaccine", "vaccination", "immunization", "dose", "booster", "injection", "shot", "schedule", "eligibility", "age group", "when should i take", "side effect of vaccine"]
+
+def node_router(state: HealthGraphState) -> HealthGraphState:
+    message = (state.user_message or "").lower().strip()
+    if not message:
+        state.route_decision = {"route": "general_query", "reason": "empty_message"}
+        return state
+
+    if any(kw in message for kw in OUTBREAK_KEYWORDS):
+        route = "emergency_outbreak"
+    elif any(kw in message for kw in SYMPTOM_KEYWORDS):
+        route = "symptom"
+    elif any(kw in message for kw in VACCINE_KEYWORDS):
+        route = "vaccination_schedule"
+    else:
+        route = "general_query"
+
+    state.route_decision = {"route": route, "reason": "expanded_rule_based"}
+    return state
+
+def node_emergency_outbreak(state: HealthGraphState) -> HealthGraphState:
+    if not state.user_message:
+        state.response = "No message provided."
+        return state
+    if not state.local_vectorstore:
+        state.response = "Outbreak data not indexed."
+        return state
+
+    retriever = state.local_vectorstore.as_retriever(search_kwargs={"k": 5})
+    conv = ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=retriever,
+        memory=state.disk_memory.memory if state.disk_memory else None,
+        return_source_documents=False,
+    )
+    state.response = conv.run(question=state.user_message)
+    if state.disk_memory:
+        state.disk_memory.persist()
+    return state
+
+def node_symptom(state: HealthGraphState) -> HealthGraphState:
+    hf_embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vector_store = AstraDBVectorStore(
+        embedding=hf_embedding,
+        api_endpoint=DB_ENDPOINT,
+        namespace="default_keyspace",
+        token=ASTRA_API_KEY,
+        collection_name="medical_v2",
+    )
+    retriever = vector_store.as_retriever()
+    prompt = PromptTemplate(
+        input_variables=["context", "question"],
+        template="You are a medical assistant.\nContext:\n{context}\n\nQuestion:\n{question}\nAnswer clearly and answer in simple terms."
+    )
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        retriever=retriever,
+        chain_type="stuff",
+        chain_type_kwargs={"prompt": prompt},
+    )
+    state.response = qa_chain.run(state.user_message)
+    return state
+
+def node_vaccination_schedule(state: HealthGraphState) -> HealthGraphState:
+    if not state.user_message:
+        return state
+    try:
+        with open(state.vaccination_json_path, "r", encoding="utf-8") as f:
+            schedule_data = json.load(f)
+        docs_json_str = json.dumps(schedule_data, ensure_ascii=False, indent=2)
+    except Exception as e:
+        state.response = f"(unable to load vaccination schedule JSON: {e})"
+        return state
+
+    prompt = f"""
+    You are an assistant that knows how to infer vaccination due-dates from a vaccination schedule JSON.
+    Use the provided schedule to answer the question as precisely as possible and, when appropriate, return a short checklist.
+
+    SCHEDULE_JSON:
+    {docs_json_str}
+
+    QUESTION:
+    {state.user_message}
+    """
+    state.response = llm.invoke(prompt).content
+    return state
+
+def node_general_query(state: HealthGraphState) -> HealthGraphState:
+    state.response = llm.invoke([{"role": "user", "content": state.user_message}]).content
+    return state
+
+def node_route_dispatcher(state: HealthGraphState) -> HealthGraphState:
+    route = state.route_decision["route"] if state.route_decision else "general_query"
+    if route == "emergency_outbreak":
+        return node_emergency_outbreak(state)
+    if route == "symptom":
+        return node_symptom(state)
+    if route == "vaccination_schedule":
+        return node_vaccination_schedule(state)
+    return node_general_query(state)
+
+def node_translation(state: HealthGraphState) -> HealthGraphState:
+    if not state.response:
+        state.response = "No response to translate."
+        return state
+
+    prompt = f"""
+    You are a translation assistant. 
+    Take the following text and translate it into **Odia** and **Telugu**.
+
+    TEXT: {state.response}
+    """
+    result = llm.invoke(prompt)
+    try:
+        state.response = json.loads(result.content)
+    except Exception:
+        state.response = {"original": state.response, "translation_raw": result.content}
+    return state
+
+# ----------------------------
+# Build workflow
+# ----------------------------
+workflow = StateGraph(HealthGraphState)
+workflow.add_node("web_ingress", node_web_ingress)
+workflow.add_node("load_vaccination_json", node_load_vaccination_json)
+workflow.add_node("load_outbreak_pdf", node_load_outbreak_pdf)
+workflow.add_node("build_faiss_index", node_build_faiss_index)
+workflow.add_node("router", node_router)
+workflow.add_node("route_dispatcher", node_route_dispatcher)
+workflow.add_node("emergency_outbreak", node_emergency_outbreak)
+workflow.add_node("symptom", node_symptom)
+workflow.add_node("vaccination_schedule", node_vaccination_schedule)
+workflow.add_node("general_query", node_general_query)
+workflow.add_node("translation", node_translation)
+
+workflow.add_edge(START, "web_ingress")
+workflow.add_edge("web_ingress", "router")
+workflow.add_edge("router", "route_dispatcher")
+workflow.add_edge("load_vaccination_json", "build_faiss_index")
+workflow.add_edge("load_outbreak_pdf", "build_faiss_index")
+workflow.add_edge("build_faiss_index", "route_dispatcher")
+workflow.add_edge("route_dispatcher", "translation")
+workflow.add_edge("translation", END)
+
+app_graph = workflow.compile()
+print("✅ Workflow compiled successfully.")
+
+# # ----------------------------
+# # FastAPI app
+# # ----------------------------
+# app = FastAPI()
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],  
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+# # Preload outbreak docs & FAISS once
+# disk_mem_global = DiskConversationMemory()
+# state_preload = HealthGraphState(disk_memory=disk_mem_global)
+# state_preload = node_load_outbreak_pdf(state_preload)
+# state_preload = node_build_faiss_index(state_preload)
+# global_vectorstore = state_preload.local_vectorstore
+# print("✅ FAISS index preloaded.")
+
+# # ----------------------------
+# # API endpoint
+# # ----------------------------
+# @app.post("/send_message")
+# async def send_message(message: str = Form(...)):
+#     state = HealthGraphState(
+#         user_message=message,
+#         disk_memory=disk_mem_global,
+#         local_vectorstore=global_vectorstore
+#     )
+#     final_state = app_graph.invoke(state)
+#     response_text = final_state["response"]
+
+#     if isinstance(response_text, dict):
+#         original = response_text.get("original", "")
+#         translation = response_text.get("translation_raw", "")
+#         combined_reply = original + ("\n\n--- Translation/Raw ---\n" + translation if translation else "")
+#     else:
+#         combined_reply = str(response_text)
+
+#     return JSONResponse({"reply": combined_reply})
+
+# @app.get("/")
+# async def home():
+#     return {"status": "Agent is running!"}
+
+# # ----------------------------
+# # Entry
+# # ----------------------------
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+
+
+import warnings
+warnings.filterwarnings("ignore")
+
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+disk_mem_global = DiskConversationMemory()
+
+
+class MessageRequest(BaseModel):
+    message: str
+
+
+@app.post("/send_message")
+async def send_message(request: MessageRequest):
+    state = HealthGraphState(
+        user_message=request.message,
+        disk_memory=disk_mem_global
+    )
+
+    state = node_load_outbreak_pdf(state)
+    state = node_build_faiss_index(state)
+
+    final_state = app_graph.invoke(state)
+    response_text = final_state["response"]
+
+    if isinstance(response_text, dict):
+        original = response_text.get("original", "")
+        translation = response_text.get("translation_raw", "")
+        reply = original + ("\n\n--- Translation/Raw ---\n" + translation if translation else "")
+    else:
+        reply = str(response_text)
+
+    return JSONResponse({"reply": reply})
+
+@app.get("/")
+async def root():
+    return {"message": "HealthGraph Assistant API is running 🚀"}
+
